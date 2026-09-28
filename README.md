@@ -1,62 +1,105 @@
-# Operating-Systems
-A compact yet fully functional multithreaded RISC-V operating system kernel, developed on Linux.
-# RISC-V Kernel
+# RISC-V Multithreaded Kernel
 
-A preemptive multithreaded operating system kernel for RISC-V, written from scratch in C++ and assembly. Runs bare metal on QEMU.
+![Architecture: RV64IMA](https://img.shields.io/badge/architecture-RV64IMA-blue)
+![Language: C++11 and assembly](https://img.shields.io/badge/language-C%2B%2B11%20%2B%20assembly-informational)
+![Target: QEMU virt](https://img.shields.io/badge/target-QEMU%20virt-orange)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Built for the Operating Systems 1 course at the School of Electrical Engineering, University of Belgrade.
+An educational **64-bit RISC-V operating system kernel** implementing preemptive threads, counting semaphores, dynamic memory allocation, sleeping, and buffered console I/O in **freestanding C++11 and assembly**.
 
-## What it is
+Developed for **Operating Systems 1** at the **School of Electrical Engineering, University of Belgrade**, using the supplied course platform libraries.
 
-There is no standard library here, no host operating system, and no allocator sitting underneath. The kernel boots into a bare machine, installs its own trap handler, and from that point provides threads, semaphores, dynamic memory, and console I/O to user programs.
+[Architecture](project-base/docs/architecture.md) · [Class reference](project-base/docs/README.md) · [System calls](project-base/docs/api/CApi.md) · [Build and testing](project-base/docs/build-and-testing.md) · [Implementation notes](project-base/docs/implementation-notes.md)
 
-Everything a normal program takes for granted — `new`, a thread, a mutex, a `printf` — had to be built before it could be used.
+## Features
 
-## The architecture
+| Subsystem | Implementation |
+| --- | --- |
+| Threads | Separate stacks, thread control blocks, voluntary dispatch, and timer-driven preemption |
+| Scheduling | FIFO ready queue with round-robin scheduling and a default two-tick time slice |
+| Synchronization | Blocking counting semaphores and multi-permit wait/signal extensions |
+| Memory | First-fit allocation, block splitting, adjacent-region coalescing, and slot pools for kernel objects |
+| Timing | Sleep/wakeup through a relative-delay list; periodic callbacks followed by relative sleeps |
+| Console | Interrupt-driven input; buffered output drained by a worker that polls device readiness |
+| Interfaces | C-style system calls and C++ `Thread`, `Semaphore`, `PeriodicThread`, and `Console` wrappers |
+| Reclamation | A collector thread releases finished TCBs and their stacks |
 
-User code runs in RISC-V's unprivileged mode and cannot touch kernel memory or execute privileged instructions. Every request into the kernel crosses a real privilege boundary: an `ecall` traps into supervisor mode, arguments arrive in registers according to an ABI I defined, and control returns through `sret` to exactly the instruction the user program was suspended on.
+## Architecture
 
-Getting that return correct is more delicate than it sounds. The supervisor status and exception program counter registers have to be saved and restored around the trap, or the kernel returns a user thread into the wrong privilege level, or into the wrong instruction, or into itself. The system includes a test that deliberately attempts privileged instructions from user code and expects to be stopped — making it fail *correctly*, rather than crashing the kernel or quietly succeeding, was the sharpest edge of the whole project.
+The application and kernel are statically linked into one image and **share an address space**. User thread bodies execute in U-mode, and system calls enter S-mode through `ecall`. This demonstrates privilege transitions without implementing separate process address spaces.
 
-## Threads
+```mermaid
+flowchart TD
+    App["User application"] --> CPP["C++ API"]
+    App --> C["C-style API"]
+    CPP --> C
+    C --> Trap["ecall / supervisor trap"]
+    IRQ["Timer and console interrupts"] --> Trap
+    Trap --> Threads["TCB / Scheduler / Timer"]
+    Trap --> Sync["Sem / console buffers"]
+    Trap --> Heap["MemoryAllocator"]
+    Sync --> Threads
+```
 
-Scheduling is preemptive. Every thread receives a time slice, and when a timer interrupt fires with the slice exhausted, the kernel picks the next ready thread and swaps to it. The context switch itself is assembly — stack pointer and return address exchanged between two thread control blocks, which is the smallest possible thing you can call an operating system.
+Trap entry saves registers on the calling thread's stack. A blocking service can suspend that kernel call chain while another thread runs; resumption eventually returns through `sret`. Direct kernel-thread operations also require synchronization because the console and collector bodies execute with interrupts enabled.
 
-Threads can also give up the processor voluntarily, block on a semaphore, or sleep for a fixed duration and be woken by the timer.
+The supplied runtime provides startup and hardware support. The build targets QEMU's `virt` machine with one CPU and 128 MiB of RAM. There is no filesystem, executable loader, networking stack, or GUI.
 
-Two APIs sit on top of the same kernel. The C interface exposes the raw calls — create a thread, wait on a semaphore, allocate memory. The C++ interface wraps them in classes, where a thread is written by subclassing and overriding `run()`. Both can be mixed freely in the same program.
+## Build and run
 
-## The garbage collector
+From the repository root:
 
-A thread cannot free the stack it is currently standing on.
+```bash
+cd "project-base"
+make
+make qemu
+```
 
-This is obvious stated plainly and was not obvious while I was chasing the crash. A thread calling exit is still executing on its own stack. Releasing that memory means the very next instruction runs on freed memory, and the failure surfaces somewhere unrelated, much later, looking like something else entirely.
+Requirements: GNU Make, a compatible RISC-V GCC/G++ and binutils toolchain, and `qemu-system-riscv64`. The Makefile detects supported prefixes; an explicit prefix is also accepted:
 
-So exiting threads don't free themselves. They mark themselves finished and stop being scheduled, and a dedicated garbage collector thread reclaims their stacks afterward, once nothing is running on them anymore. The collector exists purely because of that constraint, and the constraint generalizes: a resource cannot clean itself up if the cleanup code needs the resource.
+```bash
+make TOOLPREFIX=riscv64-unknown-elf-
+make qemu TOOLPREFIX=riscv64-unknown-elf-
+```
 
-## Semaphores
+The build produces `kernel` and `kernel.asm`. `make clean` removes generated output. The `qemu-gdb` target requires a `.gdbinit.tmpl-riscv` file that is absent from the supplied archive. See the [build guide](project-base/docs/build-and-testing.md) for details.
 
-Counting semaphores with genuine blocking. A thread that fails a wait is removed from the ready queue entirely and parked on the semaphore's own queue — it consumes no processor time while waiting, and a signal moves exactly one thread back. There is no spinning anywhere in the system.
+## Tests
 
-They support waiting and signalling by more than one at a time, which the console depends on.
+At the initial prompt, enter a test number followed by Enter:
 
-## Memory
+| Options | Coverage |
+| --- | --- |
+| 1–2 | C-style and C++ threads with explicit dispatch |
+| 3–4 | Producer/consumer synchronization |
+| 5–6 | Sleep, preemption, and buffered I/O |
+| 7 | Privileged-instruction attempt from a user thread; expected guest termination |
+| 8 | Matrix row workers synchronized by a semaphore; expected total: 28 |
+| 9 | Placeholder only; no paired-thread test runs |
 
-Two layers. Underneath is a first-fit allocator working directly on a raw heap region the linker hands over, merging adjacent free blocks as they're released.
+Additional experiments live in `project-base/myTests/`. The [testing guide](project-base/docs/build-and-testing.md) lists their entry points and limitations. Test 8 uses completion signaling; the kernel has no `Thread::join()` API.
 
-Above it is a pooled allocator for kernel objects. Thread control blocks and semaphores are small, numerous, and created and destroyed constantly, and running them through a general-purpose heap fragments it quickly. The pool carves fixed-size slots out of larger chunks instead, which keeps allocation constant-time and leaves the heap intact for user allocations. `new` and `delete` are overridden globally to route through it.
+## Repository guide
 
-## Console
+| Path | Contents |
+| --- | --- |
+| `project-base/docs/classes/` | Ten kernel-class references |
+| `project-base/docs/api/` | Four C++ class references and the syscall/ABI reference |
+| `project-base/docs/test-classes/` | Eighteen test/example class references |
+| `project-base/h/` | Kernel and API declarations |
+| `project-base/src/` | C++ implementation and assembly |
+| `project-base/lib/` | Supplied platform headers and libraries |
+| `project-base/test/` | Interactive application and tests |
+| `project-base/myTests/` | Additional development experiments |
 
-Input and output are a producer-consumer problem, so the kernel solves it with its own primitives.
+Start with the [architecture walkthrough](project-base/docs/architecture.md), then follow [Riscv](project-base/docs/classes/Riscv.md), [TCB](project-base/docs/classes/TCB.md), and the [documentation index](project-base/docs/README.md).
 
-User threads calling for a character block on a bounded buffer rather than polling the hardware. Kernel threads on the other side drain the buffer into the console port and fill it from the keyboard, synchronized by the same semaphores the rest of the system uses. The kernel eats its own cooking, which is the honest test of whether the primitives actually work.
+## Status and limitations
 
-## Building and running
+Core mechanisms are implemented, with remaining issues around semaphore destruction with waiters, reclaimed thread handles, suspend/resume state transitions, allocator alignment, and console-buffer synchronization. The [implementation notes](project-base/docs/implementation-notes.md) explain the affected paths and distinguish intended behavior from established guarantees.
 
-Requires a RISC-V cross toolchain and `qemu-system-riscv64`. The Makefile locates the toolchain itself.
-make        build the kernel image
-make qemu   boot it under QEMU
-make clean
+Documentation was checked against the supplied code and assignment. **A fresh kernel build and QEMU run were not performed for this documentation update** because the cross compiler and emulator were unavailable. No kernel source changes are included.
 
-MIT.
+## License
+
+[MIT License](LICENSE), copyright © 2026 Neske. The supplied project base has a [separate permissive notice](project-base/LICENSE) crediting the xv6 authors at MIT and the University of Belgrade modifications. Preserve both notices.

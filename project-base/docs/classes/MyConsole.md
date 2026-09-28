@@ -1,6 +1,6 @@
 # MyConsole
 
-[Documentation index](../README.md) · [Repository README](../../../../README.md)
+[Documentation index](../README.md) · [Repository README](../../../README.md)
 
 | Property | Details |
 |---|---|

@@ -1,6 +1,6 @@
 # Architecture and Execution Flow
 
-[Documentation index](README.md) · [Repository README](../../../README.md)
+[Documentation index](README.md) · [Repository README](../../README.md)
 
 ## Platform and scope
 

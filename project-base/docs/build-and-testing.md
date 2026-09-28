@@ -1,6 +1,6 @@
 # Build, Run, and Test Guide
 
-[Documentation index](README.md) · [Repository README](../../../README.md)
+[Documentation index](README.md) · [Repository README](../../README.md)
 
 ## Required environment
 
@@ -13,7 +13,7 @@ These instructions describe the checked-in Makefile. They are not a claim of val
 From the repository root:
 
 ```bash
-cd "os1 project/project-base"
+cd "project-base"
 make
 make qemu
 ```

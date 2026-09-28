@@ -1,6 +1,6 @@
 # Documentation Index
 
-[Repository README](../../../README.md)
+[Repository README](../../README.md)
 
 This reference describes the supplied implementation. API names and source identifiers retain their original spelling; explanations are in English. Nested structures are covered in their parent pages and the supporting-types reference.
 
